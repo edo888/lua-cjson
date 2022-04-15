@@ -3,7 +3,7 @@ Name
 
 lua-cjson - Fast JSON encoding/parsing - modified to preserve object key order.
 
-NOTE: If you add/remove keys, you will need to manually update __orders metatable
+NOTE: If you add/remove keys, you will need to manually update __order metatable
 
 ```
 local cjson = require("cjson.safe")
