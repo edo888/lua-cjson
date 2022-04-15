@@ -1,9 +1,12 @@
 Name
 ====
 
-lua-cjson - Fast JSON encoding/parsing - modified to preserve object key order, if you add/remove keys, you need to manually update __orders metatable
+lua-cjson - Fast JSON encoding/parsing - modified to preserve object key order.
 
-```local cjson = require("cjson.safe")
+NOTE: If you add/remove keys, you will need to manually update __orders metatable
+
+```
+local cjson = require("cjson.safe")
 
 local json_encode = cjson.encode
 local json_decode = cjson.decode
@@ -25,7 +28,9 @@ end
 print('text: ', json_encode(a))
 ```
 
-```text: {"a":1, "b":2, "c":3, "d":4, "e":{"f": 5, "g": 6, "x": null}, "h":[7, 8, 9], "i":[], "j":{}}
+OUTPUT:
+```
+text: {"a":1, "b":2, "c":3, "d":4, "e":{"f": 5, "g": 6, "x": null}, "h":[7, 8, 9], "i":[], "j":{}}
 *__order:
     1:a
     2:b
