@@ -1,7 +1,7 @@
 Name
 ====
 
-lua-cjson - Fast JSON encoding/parsing
+lua-cjson - Fast JSON encoding/parsing - modified to preserve object key order
 
 Table of Contents
 =================
