@@ -1,7 +1,42 @@
 Name
 ====
 
-lua-cjson - Fast JSON encoding/parsing - modified to preserve object key order
+lua-cjson - Fast JSON encoding/parsing - modified to preserve object key order, if you add/remove keys, you need to manually update __orders metatable
+
+```local cjson = require("cjson.safe")
+
+local json_encode = cjson.encode
+local json_decode = cjson.decode
+
+local text = [[{"a":1, "b":2, "c":3, "d":4, "e":{"f": 5, "g": 6, "x": null}, "h":[7, 8, 9], "i":[], "j":{}}]]
+
+print('text: ', text)
+
+local a = json_decode(text)
+
+local mt = getmetatable(a)
+for k, v in pairs(mt) do
+    print('*', k, ':')
+    for j, p in pairs(v) do
+        print('    ', j, ':', p)
+    end
+end
+
+print('text: ', json_encode(a))
+```
+
+```text: {"a":1, "b":2, "c":3, "d":4, "e":{"f": 5, "g": 6, "x": null}, "h":[7, 8, 9], "i":[], "j":{}}
+*__order:
+    1:a
+    2:b
+    3:c
+    4:d
+    5:e
+    6:h
+    7:i
+    8:j
+text: {"a":1,"b":2,"c":3,"d":4,"e":{"f":5,"g":6,"x":null},"h":[7,8,9],"i":[],"j":{}}
+```
 
 Table of Contents
 =================
