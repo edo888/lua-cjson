@@ -52,7 +52,7 @@
 #endif
 
 #ifndef CJSON_VERSION
-#define CJSON_VERSION   "2.1.0.10"
+#define CJSON_VERSION   "2.1.0.6"
 #endif
 
 #ifdef _MSC_VER
@@ -100,10 +100,6 @@
 
 #else
 #define json_lightudata_mask(ludata)    (ludata)
-#endif
-
-#if LUA_VERSION_NUM > 501
-#define lua_objlen(L,i)		lua_rawlen(L, (i))
 #endif
 
 static const char * const *json_empty_array;
@@ -697,14 +693,87 @@ static void json_append_number(lua_State *l, json_config_t *cfg,
 static void json_append_object(lua_State *l, json_config_t *cfg,
                                int current_depth, strbuf_t *json)
 {
-    int comma, keytype;
+    int keytype;
 
     /* Object */
     strbuf_append_char(json, '{');
 
-    lua_pushnil(l);
+    /* edo888 customization: iterate over __order metakeys if present instead of calling next() */
+        // stack: t
+    int has_metatable = lua_getmetatable(l, -1);
+    if(has_metatable) {
+        // stack: t, {}*
+
+        // check to see if we have __order in metatable
+        lua_pushstring(l, "__order");
+            // stack: t, {}*, __order
+        lua_rawget(l, -2);
+            // stack: t, {}*, nil|value
+
+        if(!lua_istable(l, -1)) {
+            // no proper __order is present in metatable, continue as usual
+            lua_pop(l, 2);
+                // stack: t
+        } else {
+            // here __order table is presumed to be array
+                // stack: t, {}*, {key_1, key_2, key_3, ...}
+            lua_remove(l, -2);
+                // stack: t, {key_1, key_2, key_3, ...}
+
+            size_t obj_length = lua_objlen(l, -1);
+
+            lua_insert(l, -2);
+                // stack: {key_1, key_2, key_3, ...}, t
+
+            for (int i = 1; i <= obj_length; i++) {
+                if (i > 1)
+                    strbuf_append_char(json, ',');
+
+                lua_rawgeti(l, -2, i);
+                    // stack: {key_1, key_2, key_3, ...}, t, key_i
+
+                lua_pushvalue(l, -1);
+                    // stack: {key_1, key_2, key_3, ...}, t, key_i, key_i
+
+                lua_rawget(l, -3);
+                    // stack: {key_1, key_2, key_3, ...}, t, key_i, value
+
+                /* table, key, value */
+                keytype = lua_type(l, -2);
+                if (keytype == LUA_TNUMBER) {
+                    strbuf_append_char(json, '"');
+                    json_append_number(l, cfg, json, -2);
+                    strbuf_append_mem(json, "\":", 2);
+                } else if (keytype == LUA_TSTRING) {
+                    json_append_string(l, json, -2);
+                    strbuf_append_char(json, ':');
+                } else {
+                    json_encode_exception(l, cfg, json, -2,
+                                  "table key must be a number or string");
+                    /* never returns */
+                }
+
+                /* table, key, value */
+                json_append_data(l, cfg, current_depth, json);
+                lua_pop(l, 2);
+                /* table */
+            }
+
+            strbuf_append_char(json, '}');
+
+            lua_remove(l, -2);
+                // stack: t
+
+            return;
+        }
+    }
+    /* end edo888 customization */
+
     /* table, startkey */
-    comma = 0;
+    lua_pushnil(l);
+        // stack: t, nil
+
+    int comma = 0;
     while (lua_next(l, -2) != 0) {
         if (comma)
             strbuf_append_char(json, ',');
@@ -800,7 +869,7 @@ static void json_append_data(lua_State *l, json_config_t *cfg,
     case LUA_TLIGHTUSERDATA:
         if (lua_touserdata(l, -1) == NULL) {
             strbuf_append_mem(json, "null", 4);
-        } else if (lua_touserdata(l, -1) == json_lightudata_mask(&json_array)) {
+        } else if (lua_touserdata(l, -1) == &json_array) {
             json_append_array(l, cfg, current_depth, json, 0);
         }
         break;
@@ -1248,6 +1317,8 @@ static void json_parse_object_context(lua_State *l, json_parse_t *json)
 {
     json_token_t token;
 
+    size_t key_count = 0;
+
     /* 3 slots required:
      * .., table, key, value */
     json_decode_descend(l, json, 3);
@@ -1277,8 +1348,71 @@ static void json_parse_object_context(lua_State *l, json_parse_t *json)
         json_next_token(json, &token);
         json_process_value(l, json, &token);
 
+        /* edo888 customization: set special __order metatable for t table */
+        /* Set key = value */
+        //lua_rawset(l, -3);
+
+            // stack: t, key, value
+        // copy key for later use in __order metatable
+        lua_pushvalue(l, -2);
+            // stack: t, key, value, key
+        lua_insert(l, -4);
+            // stack: key, t, key, value
+
         /* Set key = value */
         lua_rawset(l, -3);
+            // stack: key, t
+
+        key_count++;
+
+        int has_metatable = lua_getmetatable(l, -1);
+        if(!has_metatable) {
+            // create new table with just one slot for __order
+            lua_createtable(l, 0, 1);
+        }
+            // stack: key, t, {}*
+
+        lua_pushstring(l, "__order");
+            // stack: key, t, {}*, __order
+        lua_rawget(l, -2);
+            // stack: key, t, {}*, nil|value
+
+        lua_pushstring(l, "__order");
+            // stack: key, t, {}*, nil|value, __order
+
+        lua_insert(l, -2);
+            // stack: key, t, {}*, __order, nil|value
+
+        if(!lua_istable(l, -1)) { // if __order is not a table, then create it
+            // remove the last element
+            lua_pop(l, 1);
+                // stack: key, t, {}*
+
+            // todo: possibly postpone creating a table till we see that key_count > 1
+            // no need to keep order for just one key
+
+            // create new table for __order key
+            // it should have at least 2 slots
+            lua_createtable(l, 2, 0);
+                // stack: key, t, {}*, __order, {}
+        }
+
+        // add key into table
+        lua_pushvalue(l, -5);
+            // stack: key, t, {}*, __order, {[0] = 0, ...}, key
+        lua_rawseti(l, -2, key_count);
+            // stack: key, t, {}*, __order, {[0] = 0, ..., key}
+
+        lua_rawset(l, -3);
+            // stack: key, t, {__order = {[0] = 0, ..., key}}*
+
+        lua_setmetatable(l, -2);
+            // stack: key, t* -- t now has a metatable
+
+        lua_replace(l, -2);
+            // stack: t*
+
+        /* end edo888 customization */
 
         json_next_token(json, &token);
 
