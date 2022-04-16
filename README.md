@@ -1,47 +1,7 @@
 Name
 ====
 
-lua-cjson - Fast JSON encoding/parsing - modified to preserve object key order.
-
-NOTE: If you add/remove keys, you will need to manually update __order metatable
-
-```
-local cjson = require("cjson.safe")
-
-local json_encode = cjson.encode
-local json_decode = cjson.decode
-
-local text = [[{"a":1, "b":2, "c":3, "d":4, "e":{"f": 5, "g": 6, "x": null}, "h":[7, 8, 9], "i":[], "j":{}}]]
-
-print('text: ', text)
-
-local a = json_decode(text)
-
-local mt = getmetatable(a)
-for k, v in pairs(mt) do
-    print('*', k, ':')
-    for j, p in pairs(v) do
-        print('    ', j, ':', p)
-    end
-end
-
-print('text: ', json_encode(a))
-```
-
-OUTPUT:
-```
-text: {"a":1, "b":2, "c":3, "d":4, "e":{"f": 5, "g": 6, "x": null}, "h":[7, 8, 9], "i":[], "j":{}}
-*__order:
-    1:a
-    2:b
-    3:c
-    4:d
-    5:e
-    6:h
-    7:i
-    8:j
-text: {"a":1,"b":2,"c":3,"d":4,"e":{"f":5,"g":6,"x":null},"h":[7,8,9],"i":[],"j":{}}
-```
+A fork of OpenResty "lua-cjson - Fast JSON encoding/parsing" library with option to preserve object key order.
 
 Table of Contents
 =================
@@ -56,6 +16,7 @@ Table of Contents
     * [encode_number_precision](#encode_number_precision)
     * [encode_escape_forward_slash](#encode_escape_forward_slash)
     * [decode_array_with_array_mt](#decode_array_with_array_mt)
+    * [decode_save_key_order](#decode_save_key_order)
 
 Description
 ===========
@@ -243,6 +204,63 @@ cjson.decode_array_with_array_mt(true)
 local my_json = [[{"my_array":[]}]]
 local t = cjson.decode(my_json)
 cjson.encode(t) -- {"my_array":[]} properly re-encoded as an array
+```
+
+decode_save_key_order
+--------------------------
+**syntax:** `cjson.decode_save_key_order(enabled)`
+
+**default:** false
+
+If enabled, key order in every object will be preserved in
+`__order` metatable, which will later be used during encoding.
+In that case decoding/encoding a json text will have the key
+order preserved.
+
+NOTE: If you add/remove keys after decoding, you will need to
+manually update `__order` metatable.
+
+If disabled, encoding will output object keys in arbitrary order.
+
+The `enabled` argument is a boolean.
+
+Example:
+
+```
+local cjson = require("cjson.safe")
+cjson.decode_save_key_order(true)
+
+local json_encode = cjson.encode
+local json_decode = cjson.decode
+
+local text = [[{"a":1,"b":2,"c":3,"d":4,"e":{"f":5,"g":6},"h":[7,8,9]}]]
+
+print('text: ', text)
+
+local a = json_decode(text)
+
+local mt = getmetatable(a)
+for k, v in pairs(mt) do
+    print('*', k, ':')
+    for j, p in pairs(v) do
+        print('    ', j, ':', p)
+    end
+end
+
+print('text: ', json_encode(a))
+```
+
+Output:
+```
+text: {"a":1,"b":2,"c":3,"d":4,"e":{"f":5,"g":6},"h":[7,8,9]}
+*__order:
+    1:a
+    2:b
+    3:c
+    4:d
+    5:e
+    6:h
+text: {"a":1,"b":2,"c":3,"d":4,"e":{"f":5,"g":6},"h":[7,8,9]}
 ```
 
 [Back to TOC](#table-of-contents)
