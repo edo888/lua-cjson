@@ -82,6 +82,7 @@
 #define DEFAULT_ENCODE_EMPTY_TABLE_AS_OBJECT 1
 #define DEFAULT_DECODE_ARRAY_WITH_ARRAY_MT 0
 #define DEFAULT_ENCODE_ESCAPE_FORWARD_SLASH 1
+#define DEFAULT_DECODE_SAVE_KEY_ORDER 0
 
 #ifdef DISABLE_INVALID_NUMBERS
 #undef DEFAULT_DECODE_INVALID_NUMBERS
@@ -161,6 +162,7 @@ typedef struct {
     int decode_invalid_numbers;
     int decode_max_depth;
     int decode_array_with_array_mt;
+    int decode_save_key_order;
 } json_config_t;
 
 typedef struct {
@@ -422,6 +424,15 @@ static int json_cfg_encode_escape_forward_slash(lua_State *l)
     return ret;
 }
 
+static int json_cfg_decode_save_key_order(lua_State *l)
+{
+    json_config_t *cfg = json_arg_init(l, 1);
+    
+    json_enum_option(l, 1, &cfg->decode_save_key_order, NULL, 1);
+    
+    return 1;
+}
+
 static int json_destroy_config(lua_State *l)
 {
     json_config_t *cfg;
@@ -459,6 +470,7 @@ static void json_create_config(lua_State *l)
     cfg->encode_empty_table_as_object = DEFAULT_ENCODE_EMPTY_TABLE_AS_OBJECT;
     cfg->decode_array_with_array_mt = DEFAULT_DECODE_ARRAY_WITH_ARRAY_MT;
     cfg->encode_escape_forward_slash = DEFAULT_ENCODE_ESCAPE_FORWARD_SLASH;
+    cfg->decode_save_key_order = DEFAULT_DECODE_SAVE_KEY_ORDER;
 
 #if DEFAULT_ENCODE_KEEP_BUFFER > 0
     strbuf_init(&cfg->encode_buf, 0);
@@ -699,75 +711,78 @@ static void json_append_object(lua_State *l, json_config_t *cfg,
     strbuf_append_char(json, '{');
 
     /* edo888 customization: iterate over __order metakeys if present instead of calling next() */
-        // stack: t
-    int has_metatable = lua_getmetatable(l, -1);
-    if(has_metatable) {
-        // stack: t, {}*
+    if (cfg->decode_save_key_order) {
+            // stack: t
+        int has_metatable = lua_getmetatable(l, -1);
+        if(has_metatable) {
+            // stack: t, {}*
 
-        // check to see if we have __order in metatable
-        lua_pushstring(l, "__order");
-            // stack: t, {}*, __order
-        lua_rawget(l, -2);
-            // stack: t, {}*, nil|value
+            // check to see if we have __order in metatable
+            lua_pushstring(l, "__order");
+                // stack: t, {}*, __order
+            lua_rawget(l, -2);
+                // stack: t, {}*, nil|value
 
-        if(!lua_istable(l, -1)) {
-            // no proper __order is present in metatable, continue as usual
-            lua_pop(l, 2);
-                // stack: t
-        } else {
-            // here __order table is presumed to be array
-                // stack: t, {}*, {key_1, key_2, key_3, ...}
-            lua_remove(l, -2);
-                // stack: t, {key_1, key_2, key_3, ...}
+            if(!lua_istable(l, -1)) {
+                // no proper __order is present in metatable, continue as usual
+                lua_pop(l, 2);
+                    // stack: t
+            } else {
+                // here __order table is presumed to be array
+                    // stack: t, {}*, {key_1, key_2, key_3, ...}
+                lua_remove(l, -2);
+                    // stack: t, {key_1, key_2, key_3, ...}
 
-            size_t obj_length = lua_objlen(l, -1);
+                size_t obj_length = lua_objlen(l, -1);
 
-            lua_insert(l, -2);
-                // stack: {key_1, key_2, key_3, ...}, t
+                lua_insert(l, -2);
+                    // stack: {key_1, key_2, key_3, ...}, t
 
-            for (int i = 1; i <= obj_length; i++) {
-                if (i > 1)
-                    strbuf_append_char(json, ',');
+                for (int i = 1; i <= obj_length; i++) {
+                    if (i > 1)
+                        strbuf_append_char(json, ',');
 
-                lua_rawgeti(l, -2, i);
-                    // stack: {key_1, key_2, key_3, ...}, t, key_i
+                    lua_rawgeti(l, -2, i);
+                        // stack: {key_1, key_2, key_3, ...}, t, key_i
 
-                lua_pushvalue(l, -1);
-                    // stack: {key_1, key_2, key_3, ...}, t, key_i, key_i
+                    lua_pushvalue(l, -1);
+                        // stack: {key_1, key_2, key_3, ...}, t, key_i, key_i
 
-                lua_rawget(l, -3);
-                    // stack: {key_1, key_2, key_3, ...}, t, key_i, value
+                    lua_rawget(l, -3);
+                        // stack: {key_1, key_2, key_3, ...}, t, key_i, value
 
-                /* table, key, value */
-                keytype = lua_type(l, -2);
-                if (keytype == LUA_TNUMBER) {
-                    strbuf_append_char(json, '"');
-                    json_append_number(l, cfg, json, -2);
-                    strbuf_append_mem(json, "\":", 2);
-                } else if (keytype == LUA_TSTRING) {
-                    json_append_string(l, json, -2);
-                    strbuf_append_char(json, ':');
-                } else {
-                    json_encode_exception(l, cfg, json, -2,
-                                  "table key must be a number or string");
-                    /* never returns */
+                    /* table, key, value */
+                    keytype = lua_type(l, -2);
+                    if (keytype == LUA_TNUMBER) {
+                        strbuf_append_char(json, '"');
+                        json_append_number(l, cfg, json, -2);
+                        strbuf_append_mem(json, "\":", 2);
+                    } else if (keytype == LUA_TSTRING) {
+                        json_append_string(l, json, -2);
+                        strbuf_append_char(json, ':');
+                    } else {
+                        json_encode_exception(l, cfg, json, -2,
+                                      "table key must be a number or string");
+                        /* never returns */
+                    }
+
+                    /* table, key, value */
+                    json_append_data(l, cfg, current_depth, json);
+                    lua_pop(l, 2);
+                    /* table */
                 }
 
-                /* table, key, value */
-                json_append_data(l, cfg, current_depth, json);
-                lua_pop(l, 2);
-                /* table */
-            }
+                strbuf_append_char(json, '}');
 
-            strbuf_append_char(json, '}');
-
-            lua_remove(l, -2);
-                // stack: t
-
-            return;
+                lua_remove(l, -2);
+                    // stack: t
+            
+                return;
+            } 
         }
+
+        /* end edo888 customization */
     }
-    /* end edo888 customization */
 
     /* table, startkey */
     lua_pushnil(l);
@@ -1348,71 +1363,74 @@ static void json_parse_object_context(lua_State *l, json_parse_t *json)
         json_next_token(json, &token);
         json_process_value(l, json, &token);
 
-        /* edo888 customization: set special __order metatable for t table */
-        /* Set key = value */
-        //lua_rawset(l, -3);
+        /* edo888: save object key order in __order metatable */
+        if (json->cfg->decode_save_key_order) {
 
-            // stack: t, key, value
-        // copy key for later use in __order metatable
-        lua_pushvalue(l, -2);
-            // stack: t, key, value, key
-        lua_insert(l, -4);
-            // stack: key, t, key, value
+                // stack: t, key, value
+            // copy key for later use in __order metatable
+            lua_pushvalue(l, -2);
+                // stack: t, key, value, key
+            lua_insert(l, -4);
+                // stack: key, t, key, value
 
-        /* Set key = value */
-        lua_rawset(l, -3);
-            // stack: key, t
+            /* Set key = value */
+            lua_rawset(l, -3);
+                // stack: key, t
 
-        key_count++;
+            key_count++;
 
-        int has_metatable = lua_getmetatable(l, -1);
-        if(!has_metatable) {
-            // create new table with just one slot for __order
-            lua_createtable(l, 0, 1);
-        }
-            // stack: key, t, {}*
-
-        lua_pushstring(l, "__order");
-            // stack: key, t, {}*, __order
-        lua_rawget(l, -2);
-            // stack: key, t, {}*, nil|value
-
-        lua_pushstring(l, "__order");
-            // stack: key, t, {}*, nil|value, __order
-
-        lua_insert(l, -2);
-            // stack: key, t, {}*, __order, nil|value
-
-        if(!lua_istable(l, -1)) { // if __order is not a table, then create it
-            // remove the last element
-            lua_pop(l, 1);
+            int has_metatable = lua_getmetatable(l, -1);
+            if(!has_metatable) {
+                // create new table with just one slot for __order
+                lua_createtable(l, 0, 1);
+            }
                 // stack: key, t, {}*
 
-            // todo: possibly postpone creating a table till we see that key_count > 1
-            // no need to keep order for just one key
+            lua_pushstring(l, "__order");
+                // stack: key, t, {}*, __order
+            lua_rawget(l, -2);
+                // stack: key, t, {}*, nil|value
 
-            // create new table for __order key
-            // it should have at least 2 slots
-            lua_createtable(l, 2, 0);
-                // stack: key, t, {}*, __order, {}
+            lua_pushstring(l, "__order");
+                // stack: key, t, {}*, nil|value, __order
+
+            lua_insert(l, -2);
+                // stack: key, t, {}*, __order, nil|value
+
+            if(!lua_istable(l, -1)) { // if __order is not a table, then create it
+                // remove the last element
+                lua_pop(l, 1);
+                    // stack: key, t, {}*
+
+                // todo: possibly postpone creating a table till we see that key_count > 1
+                // no need to keep order for just one key
+
+                // create new table for __order key
+                // it should have at least 2 slots
+                lua_createtable(l, 2, 0);
+                    // stack: key, t, {}*, __order, {}
+            }
+
+            // add key into table
+            lua_pushvalue(l, -5);
+                // stack: key, t, {}*, __order, {[0] = 0, ...}, key
+            lua_rawseti(l, -2, key_count);
+                // stack: key, t, {}*, __order, {[0] = 0, ..., key}
+
+            lua_rawset(l, -3);
+                // stack: key, t, {__order = {[0] = 0, ..., key}}*
+
+            lua_setmetatable(l, -2);
+                // stack: key, t* -- t now has a metatable
+
+            lua_replace(l, -2);
+                // stack: t*
+
+            /* end edo888 customization */
+        } else {
+            /* Set key = value */
+            lua_rawset(l, -3);
         }
-
-        // add key into table
-        lua_pushvalue(l, -5);
-            // stack: key, t, {}*, __order, {[0] = 0, ...}, key
-        lua_rawseti(l, -2, key_count);
-            // stack: key, t, {}*, __order, {[0] = 0, ..., key}
-
-        lua_rawset(l, -3);
-            // stack: key, t, {__order = {[0] = 0, ..., key}}*
-
-        lua_setmetatable(l, -2);
-            // stack: key, t* -- t now has a metatable
-
-        lua_replace(l, -2);
-            // stack: t*
-
-        /* end edo888 customization */
 
         json_next_token(json, &token);
 
@@ -1613,6 +1631,7 @@ static int lua_cjson_new(lua_State *l)
         { "encode_invalid_numbers", json_cfg_encode_invalid_numbers },
         { "decode_invalid_numbers", json_cfg_decode_invalid_numbers },
         { "encode_escape_forward_slash", json_cfg_encode_escape_forward_slash },
+        { "decode_save_key_order", json_cfg_decode_save_key_order },
         { "new", lua_cjson_new },
         { NULL, NULL }
     };
