@@ -217,7 +217,7 @@ If enabled, key order in every object will be preserved in
 In that case decoding/encoding a json text will have the key
 order preserved.
 
-NOTE: If you add/remove keys after decoding, you will need to
+**Note**: If you add/remove keys after decoding, you will need to
 manually update `__order` metatable.
 
 If disabled, encoding will output object keys in arbitrary order.
